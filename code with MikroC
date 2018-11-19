@@ -1,0 +1,339 @@
+// Lcd pinout settings
+sbit LCD_RS at PORTD2_bit;
+sbit LCD_EN at PORTD3_bit;
+sbit LCD_D7 at PORTD4_bit;
+sbit LCD_D6 at PORTD5_bit;
+sbit LCD_D5 at PORTD6_bit;
+sbit LCD_D4 at PORTB7_bit;
+
+// Pin direction
+sbit LCD_RS_Direction at DDD2_bit;
+sbit LCD_EN_Direction at DDD3_bit;
+sbit LCD_D7_Direction at DDD4_bit;
+sbit LCD_D6_Direction at DDD5_bit;
+sbit LCD_D5_Direction at DDD6_bit;
+sbit LCD_D4_Direction at DDB7_bit;
+
+// Keypad pins definitions
+#define key_port PORTC
+#define key_pin PINC
+#define key_ddr DDRC
+//////////functions declarations :
+int readTemp()  ;
+void sendMsg(char* message) ;
+void getValues() ;
+void setValues(char Temp , char rate) ;
+int map(int x, float in_min, float in_max, int out_min, int out_max) ;
+void printInt(char row , char col , int number) ;
+void Timer_init ()  ;
+void EEPROM_Write(unsigned int address , unsigned char byte  )  ;
+unsigned char EEPROM_Read(unsigned int address ) ;
+unsigned char key_clicked() ;
+void INT2_ISR() ;
+void timer() ;
+/*----------------------------------------------------------------------------*/
+// Global Variables :
+char  str[16] ;
+char criticalTemp = 27;
+char criticalRate = 10;
+char check =  0;
+ // rate stuff "ask Ashraf !"
+int old = 0 ;
+int rate_count = 0 ;
+int base = 0 ;
+unsigned char counter = 0 , sec = 0 ;
+char count = 0 ;
+/*----------------------------------------------------------------------------*/
+
+
+/********** Let the Show Begin B)**********/
+void main(){
+lcd_init() ; ADC_init() ;Uart1_init(9600) ; Timer_init ();     //initialization :
+Lcd_Cmd(_LCD_CURSOR_OFF);
+asm CBI DDRB , 2
+SREG_I_bit = 1  ;GICR = (1<<INT2) ; // set interrupts .
+Uart1_write_text("AT+CMGF=1\r") ; // set GSM to SMS mode .
+check = 0 ;
+getValues() ; // get criricalTemp and CriticalRate from EEPROM .
+old = readTemp(); // rate stuff "ask Ashraf !"
+while(1) {
+         int result = readTemp() ;  // read temp from  sensor
+         printInt(1,1,result) ;
+         // compare with max value
+         if( result>criticalTemp ){
+                     delay_ms(100) ;//wait for debounce
+                     result = readTemp();  // read temp sensor
+
+                     if(result> criticalTemp){
+                                       sendMsg("temp is High") ;
+                                       while(result > criticalTemp){
+                                              result = readTemp() ;  // read temp from sensor
+                                             }
+                                       sendMsg("it's OK now :) ") ;
+
+                                       }
+                     }
+         }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//Functions :
+
+int readTemp(){
+      int t = map(ADC_read(0) , 20.4918032787, 358.606557377, -40 ,125) ;
+       // rate stuff "ask Ashraf !"
+      rate_count = rate_count+(t-old);
+              old = t;
+              if (base == 0){
+              rate_count = rate_count-t;
+              base = 1000;
+              }
+
+      /*-------------------------*/
+      return   t ;
+      }
+
+void sendMsg(char* message){
+       UART1_write_text("AT+CMGS=") ;
+       UART1_write_text("\"+249908000345\"\r") ; // AT+CMGS = "PHONE NUMBER"
+       UART1_Write(0x0D) ;//ENTER
+       UART1_Write_text(message) ;
+       UART1_Write(0x1A) ;  //ctrl+Z
+       UART1_Write(0x0D) ;//ENTER
+       }
+       
+void getValues(){
+      criticalTemp= EEPROM_Read(0x60) ; // 0x60 = temp address
+      criticalRate = EEPROM_Read(0x10)  ;// 0x10 = rate address
+      }
+
+void setValues(char temp , char rate) {
+      EEPROM_Write(0x60 , temp) ; // 0x60 = temp address
+      EEPROM_Write(0x10, rate) ;  // 0x10 = rate address
+      }
+void Timer_init (){
+     TCCR0  = 4 ;   //prescaler 256
+     TIMSK |= 1<< TOIE0 ;
+     TCNT0 = -125 ;    // 4 ms
+     }
+int map(int x, float in_min, float in_max, int out_min, int out_max){
+ return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+void printInt(char row , char col , int number){
+     char st[16]  ;
+     sprintf(st , "temp is: %d   " , number  ) ;
+     lcd_out(row , col , st) ;
+     }
+unsigned char EEPROM_Read(unsigned int address ) {
+
+         while(EECR & (1<<1));
+         EEDR = 0 ;
+         EEARL = address&0xff ;
+         asm SBI EECR , EERE
+         while(EEDR == 0);
+         return EEDR ;
+         }
+
+
+void EEPROM_Write(unsigned int address , unsigned char byte  ) {
+     while((EECR&(1<<1)));
+     EEARH = address >> 8 ;
+     EEARL = address & 0xff ;
+     EEDR = byte ;
+     asm sbi EECR , EEMWE
+     asm sbi EECR , EEWE
+
+     }
+
+unsigned char key_clicked() {
+       char coln , rown ;
+       char ch = 0 ;
+       char col1[] = {'7' ,'4' ,'1' , 'A' } ;
+       char col2 []= {'8' ,'5' ,'2' , '0' } ;
+       char col3 []= {'9' ,'6' ,'3' , '=' } ;
+       char col4 []= {'/' ,'x' ,'-' , '+' } ;
+       key_ddr = 0xf0 ; ///direction
+              //Ground_all_rows
+         key_port = 0x0f ;
+         //Wait_for_release
+              do{
+            delay_us(1);
+            coln = key_pin&0x0f ;
+
+            }while(coln != 0x0f) ;
+         do{
+            delay_us(1);
+            coln = key_pin&0x0f ;
+
+            }while(coln != 0x0f) ;
+         do{
+            delay_us(1);
+            coln = key_pin&0x0f ;
+
+            }while(coln == 0x0f)  ;
+         delay_ms(15) ;
+
+
+   do{
+            delay_us(1);
+            coln = key_pin&0x0f ;
+
+            }while(coln == 0x0f)   ;
+         //row0 :
+         key_port = 0b11101111 ;
+         delay_us(1) ;
+         coln = key_pin&0x0f ;
+         if(coln != 0x0f){
+                 rown = 0 ;
+                 }
+         else{
+               //row1 :
+               key_port = 0b11011111 ;
+               delay_us(1) ;
+               coln = key_pin&0x0f ;
+               if(coln != 0x0f){
+                          rown = 1 ;
+                          }
+               else{
+                    //row2 :
+                    key_port = 0b10111111 ;
+                    delay_us(1) ;
+                    coln = key_pin&0x0f ;
+                    if(coln != 0x0f){
+                          rown = 2;
+                          }
+                    else{
+                          //row3 :
+                          key_port = 0b01111111 ;
+                          delay_us(1) ;
+                          coln = key_pin&0x0f ;
+                          if(coln != 0x0f){
+                                  rown = 3 ;
+                                  }
+
+                          }
+                    }
+               }
+                 switch(coln){
+
+                      case 0b1110:
+                      ch = col1[rown] ;
+                      break ;
+                       case 0b1101:
+                       ch = col2[rown] ;
+
+                      break ;
+                       case 0b1011:
+                       ch = col3[rown] ;
+                      coln = 2 ;
+                      break ;
+                      case 0b0111:
+                      ch = col4[rown] ;
+                      break ;
+                      }
+              return ch ;
+              }
+/*==================================================================================*/
+// ISRs :
+void INT2_ISR() org 0x06 {
+
+int temp = 0, rate = 0 ;
+char row=1, col=6 ;
+lcd_cmd(1) ;
+lcd_out(2,1,"Rate:") ;
+lcd_out(1,1,"Temp:") ;
+while(1){
+         char ch = key_clicked() ;
+         ///ch contains pressed key !!
+         if(ch=='A') {
+           //clear all
+            lcd_cmd(1) ;
+            lcd_out(2,1,"Rate:") ;
+            lcd_out(1,1,"Temp:") ;
+            col = 6 ;
+            row = 1 ;
+            rate = temp  = 0 ;
+            }
+         else if(ch=='+'){
+         }else if(ch=='-'){
+         }else if(ch=='x'){
+         }else if(ch=='/'){
+         }else if(ch=='='){
+                 if(row == 1){
+                         col = 6  ;
+                         row = 2 ;
+                         }else
+                             break ;
+                 }
+         else{
+                 if(col<=8){
+                            lcd_chr(row , col , ch) ;
+                            if(row == 1){
+                              switch (col){
+                                case 6 :
+                                temp += (ch-0x30)*100 ;
+                                break ;
+                                case 7 :
+                                temp += (ch-0x30)*10 ;
+                                break ;
+                                case 8:
+                                temp += (ch-0x30);
+                                break ;
+                                }
+                            }else{
+                              switch (col){
+                               case 6 :
+                               rate += (ch-0x30)*100 ;
+                               break ;
+                               case 7 :
+                               rate += (ch-0x30)*10 ;
+                               break ;
+                               case 8:
+                               rate += (ch-0x30) ;
+                               break ;
+                               }
+                              }
+
+                            col++ ;
+                            }
+
+                 }
+
+         }
+
+setValues(temp , rate) ;
+getValues() ;
+
+}
+// rate stuff "ask Ashraf!"
+ISR_timer() org 0x16{
+            count++;
+            if(count >= 250 )
+            {
+
+               sec++;
+               if(sec>=10){ // number of second
+                          sec=0;
+                          if(rate_count>criticalRate){
+                                sendMsg("rate error");
+                                }
+                          rate_count=0.0;
+                          }
+               count =0;
+               }
+               
+            TCNT0 = -125 ;    // 4 ms
+            }
